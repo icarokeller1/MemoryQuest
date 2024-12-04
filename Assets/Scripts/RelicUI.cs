@@ -2,7 +2,7 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-public class RelicUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IDropHandler
+public class RelicUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragHandler, IDropHandler, IPointerEnterHandler, IPointerExitHandler
 {
     public Text nameText;
     public Text descriptionText;
@@ -11,6 +11,7 @@ public class RelicUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragH
     public Image iconImage;
     public Button actionButton;
     public Text buttonText; // Texto do botão
+    public GameObject tooltip; // Caixa flutuante para exibir os atributos
 
     public MysticRelic relic;
     private GameManager gameManager;
@@ -18,11 +19,21 @@ public class RelicUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragH
     private Transform originalParent;
     private RectTransform rectTransform;
     private CanvasGroup canvasGroup;
+    private bool isMouseOver = false; // Indica se o mouse está sobre a relíquia
 
     private void Awake()
     {
         rectTransform = GetComponent<RectTransform>();
         canvasGroup = GetComponent<CanvasGroup>();
+    }
+
+    private void Update()
+    {
+        if (isMouseOver && tooltip != null)
+        {
+            Vector3 mousePosition = Input.mousePosition;
+            UpdateTooltipPosition(mousePosition);
+        }
     }
 
     public void SetRelic(MysticRelic relic, GameManager gameManager, bool inBackpack)
@@ -51,20 +62,19 @@ public class RelicUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragH
             actionButton.onClick.AddListener(BuyRelic);
         }
     }
-
     
     public void BuyRelic()
     {
         if (gameManager.IsBackpackFull())
         {
             Debug.Log("Mochila cheia! Não é possível comprar mais relíquias.");
-            // Aqui você pode abrir a interface de venda, se necessário
             return;
         }
 
         if (gameManager.memoryEchoes >= relic.price)
         {
             gameManager.memoryEchoes -= relic.price;
+            gameManager.memoryEchoes += (int)(relic.price * gameManager.cashback);
             gameManager.AddRelicToBackpack(relic); // Adiciona à mochila do jogador
             gameManager.UpdateUI(); // Atualiza a interface da loja e do jogo
             Destroy(gameObject); // Remove a relíquia da loja
@@ -103,51 +113,56 @@ public class RelicUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragH
         if (!isInBackpack) return;
 
         originalParent = transform.parent;
-        canvasGroup.alpha = 0.6f; // Torna o objeto semitransparente
-        canvasGroup.blocksRaycasts = false; // Permite o drop
 
-        // Remove temporariamente do layout
-        transform.SetParent(gameManager.backpackRelicContainer.parent);
+        if (canvasGroup != null)
+        {
+            canvasGroup.alpha = 0.6f; // Torna o objeto semitransparente
+            canvasGroup.blocksRaycasts = false; // Permite interações de drop
+        }
+
+        // Mantém o objeto no mesmo nível visual
+        transform.SetParent(gameManager.backpackRelicContainer.parent, true);
     }
+
 
     public void OnDrag(PointerEventData eventData)
     {
         if (!isInBackpack) return;
 
-        rectTransform.anchoredPosition += eventData.delta / gameManager.GetCanvasScaleFactor();
-
-        // Detectar mudanças de posição
-        Transform closestSlot = GetClosestSlot();
-        if (closestSlot != null && closestSlot != originalParent)
-        {
-            AdjustSlotOrder(closestSlot);
-        }
+        // Atualiza a posição global diretamente
+        rectTransform.position = Input.mousePosition;
     }
+
 
     public void OnEndDrag(PointerEventData eventData)
     {
         if (!isInBackpack) return;
 
-        canvasGroup.alpha = 1.0f;
-        canvasGroup.blocksRaycasts = true;
+        if (canvasGroup != null)
+        {
+            canvasGroup.alpha = 1.0f; // Restaura a opacidade
+            canvasGroup.blocksRaycasts = true;
+        }
 
-        // Volta ao layout
+        // Retorna para o layout do slot mais próximo
         Transform closestSlot = GetClosestSlot();
         if (closestSlot != null)
         {
-            transform.SetParent(closestSlot);
+            transform.SetParent(closestSlot.parent);
             transform.SetSiblingIndex(closestSlot.GetSiblingIndex());
         }
         else
         {
-            transform.SetParent(originalParent);
+            transform.SetParent(originalParent); // Volta ao local original
         }
 
+        // Restaura a posição global para alinhar com o layout
         rectTransform.anchoredPosition = Vector2.zero;
 
-        // Atualiza a ordem da lista no GameManager
+        // Atualiza a ordem no GameManager
         gameManager.UpdateBackpackRelicsOrder();
     }
+
 
     public void OnDrop(PointerEventData eventData)
     {
@@ -172,10 +187,37 @@ public class RelicUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDragH
         return closestSlot;
     }
 
-    private void AdjustSlotOrder(Transform newParent)
+    public void OnPointerEnter(PointerEventData eventData)
     {
-        transform.SetParent(newParent.parent);
-        transform.SetSiblingIndex(newParent.GetSiblingIndex());
-        originalParent = newParent;
+        if (tooltip != null)
+        {
+            isMouseOver = true; // Ativa o rastreamento
+            tooltip.SetActive(true);
+            UpdateTooltipContent();  
+        }
+    }
+
+    public void OnPointerExit(PointerEventData eventData)
+    {
+        if (tooltip != null)
+        {
+            isMouseOver = false; // Desativa o rastreamento
+            tooltip.SetActive(false);
+        }
+    }
+
+    private void UpdateTooltipContent()
+    {
+        // Atualiza o conteúdo do tooltip com os atributos da relíquia
+        tooltip.transform.Find("TextRelicName").GetComponent<Text>().text = relic.name;
+        tooltip.transform.Find("TextRelicRarity").GetComponent<Text>().text = relic.rarity.ToString();
+        tooltip.transform.Find("TextRelicDescription").GetComponent<Text>().text = relic.description;
+        tooltip.transform.Find("TextRelicPrice").GetComponent<Text>().text = $"${relic.price}";
+    }
+
+    private void UpdateTooltipPosition(Vector3 mousePosition)
+    {
+        // Ajusta a posição do tooltip para seguir o mouse
+        tooltip.transform.position = mousePosition + new Vector3(10, -10, 2);
     }
 }

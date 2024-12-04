@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using System.Collections;
 using System.Collections.Generic;
 
 public static class ListExtensions
@@ -38,20 +39,29 @@ public class GameManager : MonoBehaviour
     public Text attemptsText; // Texto para mostrar tentativas restantes
     public Text roundText; // Texto para mostrar a rodada atual
     public Text memoryEchoesText; // Texto para mostrar os pontos mentais
-    public GameObject shopPanel; // Painel da loja (opcional)
+    public GameObject shopPanel; // Painel da loja
     public GameObject debugPanel;
-    public InputField inputField;
+    public InputField inputField; // Input do debug
+    public Image fundoAzul; // Adicione uma referência ao fundo azul
 
     // Variáveis internas
     private List<Card> cards = new List<Card>();
     private Card firstSelectedCard, secondSelectedCard;
     public int attemptsRemaining;
     private int currentRound = 1;
-    private int pairs;
+    public int pairs;
     public int memoryEchoes = 0; // Variável para armazenar os pontos mentais
     private float delayTimer = 0f;
     private bool isCheckingMatch = false;
     private bool isShopOpen = false; // Controla se a loja está aberta
+    public bool isBossRound = false; // Indica se é a rodada do chefe
+    private Coroutine colorTransitionCoroutine;
+    public float basePeekingTime = 0.5f;
+    public float totalPeekingTime;
+    public float discount = 0;
+    public float cashback = 0;
+    public int itemsOnShop = 2;
+    public float bossShuffleChance = 0.25f;
 
     void Start()
     {
@@ -80,14 +90,20 @@ public class GameManager : MonoBehaviour
         if (isShopOpen) return; // Não inicia nova rodada enquanto a loja estiver aberta
 
         ClearBoard();
+        isBossRound = (currentRound == 6);
 
         if (currentRound > 1)
         {
-            pairs++;
+            initialPairs++;
         }
 
-        memoryEchoes += 5 * currentRound;
-        attemptsRemaining = pairs * 2;
+        pairs = initialPairs;
+        attemptsRemaining = initialPairs * 2;
+        totalPeekingTime = basePeekingTime;
+        discount = 0;
+        cashback = 0;
+        bossShuffleChance = 0.25f;
+        TriggerEffects(ActivationMoment.OnRoundStart);
 
         List<int> ids = GenerateCardIDs(pairs);
 
@@ -111,8 +127,7 @@ public class GameManager : MonoBehaviour
         }
 
         // Esconde as cartas após 0.5 segundos
-        Invoke("HideAllCards", 0.5f);
-        TriggerEffects(ActivationMoment.OnRoundStart);
+        Invoke("HideAllCards", totalPeekingTime);
 
         UpdateUI();
     }
@@ -185,8 +200,23 @@ public class GameManager : MonoBehaviour
             if (AllPairsFound())
             {
                 TriggerEffects(ActivationMoment.OnRoundEnd);
+                memoryEchoes += 70;
                 currentRound++;
-                OpenShop(); // Abre a loja ao completar a rodada
+
+                if (isBossRound)
+                {
+                    isBossRound = false; // Reseta a rodada do chefe
+                }
+
+                if(currentRound > 6)
+                {
+                    Debug.Log("Parabens!!");
+                    EndGame();
+                }
+                else
+                {
+                    OpenShop(); // Abre a loja ao completar a rodada
+                }                
             }
         }
         else
@@ -196,8 +226,13 @@ public class GameManager : MonoBehaviour
             secondSelectedCard.HideCard();
             firstSelectedCard = null;
             secondSelectedCard = null;
-
             attemptsRemaining--;
+
+            if (isBossRound && Random.value < bossShuffleChance)
+            {
+                ShuffleCards(); // Embaralha as cartas no tabuleiro
+            }
+
             UpdateUI();
 
             if (attemptsRemaining <= 0)
@@ -205,6 +240,27 @@ public class GameManager : MonoBehaviour
                 EndGame();
             }
         }
+    }
+
+    private void ShuffleCards()
+    {
+        // Pega todas as posições atuais das cartas
+        List<Transform> cardTransforms = new List<Transform>();
+        foreach (Transform card in cardGrid.transform)
+        {
+            cardTransforms.Add(card);
+        }
+
+        // Embaralha a lista de posições
+        cardTransforms.Shuffle();
+
+        // Reorganiza as cartas no Grid
+        for (int i = 0; i < cardTransforms.Count; i++)
+        {
+            cardTransforms[i].SetSiblingIndex(i);
+        }
+
+        Debug.Log("As cartas foram embaralhadas!");
     }
 
     private bool AllPairsFound()
@@ -236,16 +292,62 @@ public class GameManager : MonoBehaviour
 
     public void UpdateUI()
     {
-        attemptsText.text = "Tentativas: " + attemptsRemaining;
-        roundText.text = "Rodada: " + currentRound;
-        memoryEchoesText.text = "Ecos de Memória: " + memoryEchoes; // Atualiza a exibição dos pontos mentais
+        attemptsText.text = attemptsRemaining.ToString();
+        memoryEchoesText.text = memoryEchoes.ToString(); // Atualiza a exibição dos pontos mentais
+
+        if (isBossRound)
+        {
+            roundText.text = "BOSS";
+            roundText.color = Color.red; // Destaca o texto da rodada
+
+            // Inicia a transição para o azul escuro
+            Color targetColor = new Color(20f / 255f, 50f / 255f, 100f / 255f);
+            StartColorTransition(targetColor);
+        }
+        else
+        {
+            roundText.text = currentRound.ToString() + "/6";
+            roundText.color = Color.black; // Cor padrão
+
+            // Inicia a transição para o azul padrão
+            Color targetColor = new Color(127f / 255f, 178f / 255f, 255f / 255f);
+            StartColorTransition(targetColor);
+        }
+
         DisplayBackpackRelics(); // Atualiza a interface da mochila
+    }
+
+    private void StartColorTransition(Color targetColor)
+    {
+        // Interrompe a transição anterior, se houver
+        if (colorTransitionCoroutine != null)
+        {
+            StopCoroutine(colorTransitionCoroutine);
+        }
+
+        // Inicia uma nova transição
+        colorTransitionCoroutine = StartCoroutine(TransitionBackgroundColor(fundoAzul.color, targetColor, 1f)); // 1 segundo
+    }
+
+    private IEnumerator TransitionBackgroundColor(Color startColor, Color endColor, float duration)
+    {
+        float elapsedTime = 0f;
+
+        while (elapsedTime < duration)
+        {
+            fundoAzul.color = Color.Lerp(startColor, endColor, elapsedTime / duration); // Interpola entre as cores
+            elapsedTime += Time.deltaTime;
+            yield return null; // Espera até o próximo frame
+        }
+
+        fundoAzul.color = endColor; // Garante que a cor final seja definida
     }
 
     public void OpenShop()
     {
-        PopulateShop(); // Preenche a loja com relíquias
+        itemsOnShop = 2;
         TriggerEffects(ActivationMoment.OnShopOpen);
+        PopulateShop(); // Preenche a loja com relíquias
         shopPanel.SetActive(true);
         isShopOpen = true;
     }
@@ -271,7 +373,7 @@ public class GameManager : MonoBehaviour
         List<MysticRelic> relicsToDisplay = new List<MysticRelic>();
 
         // Gera até 5 relíquias
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < itemsOnShop; i++)
         {
             Rarity selectedRarity = SelectRarity(rarityWeights);
 
@@ -285,13 +387,13 @@ public class GameManager : MonoBehaviour
 
                 // Adiciona a relíquia à lista para exibir e remove da lista disponível (para evitar repetição)
                 relicsToDisplay.Add(chosenRelic);
-                availableRelics.Remove(chosenRelic);
             }
         }
 
         // Adiciona cada relíquia selecionada à loja
         foreach (MysticRelic relic in relicsToDisplay)
         {
+            relic.price = (int)(relic.price * (1f - discount));
             GameObject relicObject = Instantiate(relicPrefab, shopRelicContainer);
             RelicUI relicUI = relicObject.GetComponent<RelicUI>();
 
@@ -323,7 +425,6 @@ public class GameManager : MonoBehaviour
 
         return Rarity.Common; // Caso não encontre, retorna o padrão
     }
-
 
     private int[] GetRarityWeights()
     {
@@ -366,6 +467,7 @@ public class GameManager : MonoBehaviour
         if (!IsBackpackFull())
         {
             playerRelics.Add(relic);
+            cashback = 0;
             TriggerEffects(ActivationMoment.OnRelicPurchase);
             Debug.Log($"Relíquia {relic.name} adicionada à mochila!");
         }
@@ -402,27 +504,6 @@ public class GameManager : MonoBehaviour
             }
         }
         Debug.Log("Ordem das relíquias atualizada dinamicamente!");
-    }
-
-    public void AddRelicEffect(MysticRelic relic)
-    {
-        Debug.Log($"Relíquia {relic.name} comprada! Aplicando efeito: {relic.description}");
-
-        // Exemplo de efeitos (você pode expandir isso):
-        switch (relic.name)
-        {
-            case "Relíquia da Fortuna":
-                attemptsRemaining += 5; // Adiciona tentativas extras
-                break;
-            case "Relíquia da Memória":
-                memoryEchoes += 10; // Adiciona ecos de memória
-                break;
-            case "Relíquia do Tempo":
-                // Adicione efeitos customizados aqui
-                break;
-        }
-
-        UpdateUI();
     }
 
     public void RestartGame()
@@ -515,15 +596,6 @@ public class GameManager : MonoBehaviour
 
     public float GetCanvasScaleFactor()
     {
-        Canvas canvas = FindObjectOfType<Canvas>();
-        if (canvas != null)
-        {
-            return canvas.scaleFactor;
-        }
-        else
-        {
-            Debug.LogError("Nenhum Canvas foi encontrado na cena!");
-            return 1f; // Retorna 1 como padrão para evitar erros adicionais
-        }
+        return FindObjectOfType<Canvas>().scaleFactor;
     }
 }
